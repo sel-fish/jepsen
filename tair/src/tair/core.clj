@@ -9,9 +9,8 @@
 (defn tair-noop-test
   [version]
   (assoc tests/noop-test
-    ; :nodes [:winterfell :riverrun :theeyrie :casterlyrock :highgarden]
-    :nodes [:winterfell]
-    :ssh {:username "root", :password "root", :port 10042}))
+    :nodes [:winterfell :riverrun :theeyrie :casterlyrock :highgarden]
+    :ssh {:username "root", :password "root", :port 22}))
 
 (defn db
   "Tair DB for a particular version."
@@ -27,6 +26,6 @@
   [version]
   (assoc tests/noop-test
     :nodes [:winterfell :riverrun :theeyrie :casterlyrock :highgarden]
-    :ssh {:username "root", :password "root", :port 10022}
+    :ssh {:username "root", :password "root", :port 22}
     :os debian/os
     :db (db version)))
