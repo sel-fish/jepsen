@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# nodes=("winterfell" "riverrun" "theeyrie" "casterlyrock" "highgarden")
-nodes=("winterfell")
+nodes=("winterfell" "riverrun" "theeyrie" "casterlyrock" "highgarden")
+# nodes=("docker1")
 first=0
 
 if [ $first -eq 0 ] ; then
   for node in ${nodes[@]}
   do
     echo "ssh-keyscan -t rsa $node >> ~/.ssh/known_hosts"
-    ssh-keyscan -t rsa $node >> ~/.ssh/known_hosts
+    # ssh-keyscan -t rsa $node >> ~/.ssh/known_hosts
   done
 else
   for node in ${nodes[@]}
