@@ -42,6 +42,13 @@
             (re-find #"inet addr:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"))
        1))
 
+(defn device-ip
+  "The local node's address of specified device"
+  [device]
+  (nth (->> (exec :ifconfig device)
+            (re-find #"inet addr:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"))
+       1))
+
 (defn ip
   "Look up an ip for a hostname"
   [host]
