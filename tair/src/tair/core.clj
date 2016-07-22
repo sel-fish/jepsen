@@ -9,7 +9,8 @@
             [jepsen.os.debian :as debian]
             [clojure.string :as str]
             [jepsen.control.net :as net]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [selmer.parser :as parser]))
 
 (def ^:dynamic *tairinfos* (ref {}))
 
@@ -37,9 +38,7 @@
       )
     (def roles (assoc-in roles [:ds] dsset))
     (def roles (assoc-in roles [:cs] cslist))
-    roles
-    )
-  )
+    roles))
 
 (defn install!
   "Installs tair on the given nodes."
@@ -57,9 +56,7 @@
                          "-debian8.tgz"))
             (c/exec :tar :xvfz "tair.tgz")))
     (c/cd (str "/tmp/tair-" version "-debian8")
-          (c/exec :dpkg :-i (c/lit "tair*.deb")))
-    )
-  )
+          (c/exec :dpkg :-i (c/lit "tair*.deb")))))
 
 (defn in?
   "true if coll contains elm"
@@ -71,37 +68,54 @@
   [node test version]
   (info node "configure Tair")
   (c/su
-    ; Config file
-    (if (in? (:cs @*tairinfos*) node)
-      (info node "is cs")
-      (info node "is not cs"))
-    (c/cd (str "/usr/local/tair-" version "/etc")
-          (c/exec :cp :dataserver.conf.default :dataserver.conf)
-          (if (in? (:cs @*tairinfos*) node)
-            (do
-              (c/exec :cp :configserver.conf.default :configserver.conf)
-              (c/exec :cp :group.conf.default :group.conf))))
-    (info node (net/device-ip (:device @*tairinfos*)))
-    (c/exec :echo (-> "dataserver.conf"
-                      io/resource
-                      slurp
-                      (str/replace "eth0" (net/device-ip (:device @*tairinfos*))))
+    (c/exec :echo (parser/render-file "dataserver.conf" @*tairinfos*)
             :> (str "/usr/local/tair-" version "/etc/dataserver.conf"))
-    )
-  )
+    (if (in? (:cs @*tairinfos*) node)
+      (do
+        (c/exec :echo (parser/render-file "configserver.conf" @*tairinfos*)
+                :> (str "/usr/local/tair-" version "/etc/configserver.conf"))
+        (c/exec :echo (parser/render-file "group.conf" @*tairinfos*)
+                :> (str "/usr/local/tair-" version "/etc/group.conf"))
+        ))))
 
-;(defn start!
-;  "Starts tair."
-;  [node test]
-;  (info node "starting tair")
-;  (c/su
-;    (c/exec :service :aerospike :start)
-;
-;    ; Enable auto-dunning as per
-;    ; http://www.aerospike.com/docs/operations/troubleshoot/cluster/
-;    ; This doesn't seem to actually do anything but ???
-;    (c/exec :asinfo :-v
-;            "config-set:context=service;paxos-recovery-policy=auto-dun-master")))
+(defn start!
+  "Start tair."
+  [node test version]
+  (info node "starting tair")
+  (c/su
+    (c/cd (str "/usr/local/tair-" version)
+          (c/exec :bash (str "tair.sh") (str "start_ds"))
+          (if (in? (:cs @*tairinfos*) node)
+            (c/exec :bash (str "tair.sh") (str "start_cs"))))))
+
+(defn retrieveip
+  "retrieve ip and fill in *tairinfos*"
+  [node]
+  (info node (net/device-ip (:device @*tairinfos*)))
+  (let [ip (net/device-ip (:device @*tairinfos*))]
+    (if (in? (:cs @*tairinfos*) node)
+      (if (= node (nth (:cs @*tairinfos*) 0))
+        ((dosync (alter *tairinfos* assoc :masterip ip))
+          (if (nil? (:slaveip @*tairinfos*))
+            (dosync (alter *tairinfos* assoc :slaveip ip))))
+        (dosync (alter *tairinfos* assoc :slaveip ip))
+        ))
+    (info "add" ip "to iplist")
+    (dosync (alter *tairinfos* assoc :iplist (concat (:iplist @*tairinfos*) `(~ip))))
+    (info "iplist is" (:iplist @*tairinfos*))))
+
+(defn stop!
+  "Stop tair."
+  [node version]
+  (info node "stop tair")
+  (c/su
+    (c/cd (str "/usr/local/tair-" version)
+          (c/exec :bash (str "tair.sh") (str "stop_ds"))
+          (if (in? (:cs @*tairinfos*) node)
+            (c/exec :bash (str "tair.sh") (str "stop_cs")))
+          (c/exec :bash (str "tair.sh") (str "clean"))
+          (c/exec :rm :-rf (str "ldbdata"))
+          )))
 
 (defn db
   "Tair DB for a particular version."
@@ -112,29 +126,41 @@
       (doto node
         ;(install! version)
         (configure! test version)
-        ; (start! test)
+        (start! test version)
         )
       )
 
     (teardown! [_ test node]
-      (info node "tearing down Tair"))
-    )
-  )
+      (info node "tearing down Tair")
+      ; a trick to retrieveip in teardown
+      ; as jepsen will run teardown before setup :)
+      (retrieveip node)
+      (stop! node version)
+      )))
+
+(defn init-tair-infos
+  "init tair infos"
+  [roles]
+  (dosync (alter *tairinfos* assoc :ds (:ds roles)))
+  (dosync (alter *tairinfos* assoc :cs (:cs roles)))
+  (dosync (alter *tairinfos* assoc :device "eth1"))
+  (dosync (alter *tairinfos* assoc :masterip nil))
+  (dosync (alter *tairinfos* assoc :slaveip nil))
+  (dosync (alter *tairinfos* assoc :groupname "group_fenqi"))
+  (dosync (alter *tairinfos* assoc :copycnt 1))
+  (dosync (alter *tairinfos* assoc :bucketcnt 100))
+  (dosync (alter *tairinfos* assoc :storage-engine "ldb"))
+  (dosync (alter *tairinfos* assoc :iplist [])))
 
 (defn tair-db-test
   [version]
   (let [
         nodes (list :yunkai)
         roles (classify nodes)
-        device "eth1"
         ]
-    (dosync (alter *tairinfos* assoc :ds (:ds roles)))
-    (dosync (alter *tairinfos* assoc :cs (:cs roles)))
-    (dosync (alter *tairinfos* assoc :device device))
+    (init-tair-infos roles)
     (assoc tests/noop-test
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
-      :db (db version))
-    )
-  )
+      :db (db version))))
