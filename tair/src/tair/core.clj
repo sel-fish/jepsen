@@ -19,8 +19,8 @@
 
 (def ^:dynamic *tairinfos* (ref {}))
 
-(defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
-(defn r   [_ _] {:type :invoke, :f :read})
+(defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
+(defn r [_ _] {:type :invoke, :f :read})
 
 (defn classify
   [nodes]
@@ -65,27 +65,27 @@
   "Returns a client for the given node. Blocks until the client is available."
   []
   (let [client (DefaultTairManager.)
-          _ (doto client
-              (.setConfigServerList (list (str (:masterip @*tairinfos*) ":5198")
-                                          (str (:slaveip @*tairinfos*) ":5198")))
-              (.setGroupName (:groupname @*tairinfos*))
-              (.init))]
+        _ (doto client
+            (.setConfigServerList (list (str (:masterip @*tairinfos*) ":5198")
+                                        (str (:slaveip @*tairinfos*) ":5198")))
+            (.setGroupName (:groupname @*tairinfos*))
+            (.init))]
     client))
 
 (defrecord TairClient [client namespace key]
   client/Client
-    (setup! [this test node]
-      (let [client (connect)]
-        ;(Thread/sleep 10000)
-        (assoc this :client client)))
+  (setup! [this test node]
+    (let [client (connect)]
+      ;(Thread/sleep 10000)
+      (assoc this :client client)))
 
 
-    (invoke! [this test op]
-      (timeout 5000 (assoc op :type :info, :error :timeout)
-               (case (:f op)
-                 :read (assoc op :type :ok, :value (str "abc")))))
+  (invoke! [this test op]
+    (timeout 5000 (assoc op :type :info, :error :timeout)
+             (case (:f op)
+               :read (assoc op :type :ok, :value (str "abc")))))
 
-    (teardown! [_ test]))
+  (teardown! [_ test]))
 
 (defn tair-client
   "A basic CAS register on top of a single key and bin."
