@@ -15,7 +15,8 @@
             [jepsen.client :as client]
             [jepsen.generator :as gen]
             )
-  (:import (com.taobao.tair.impl DefaultTairManager)))
+  (:import (com.taobao.tair.impl DefaultTairManager)
+           (com.taobao.tair Result)))
 
 (def ^:dynamic *tairinfos* (ref {}))
 
@@ -72,6 +73,18 @@
             (.init))]
     client))
 
+(defn record->map
+  "Converts a record to a map like
+
+      {:generation 1
+       :expiration date
+       :bins {:k1 v1, :k2 v2}}"
+  [^Result r]
+  (when (.getValue r)
+    {:rc      (.toString (.getRc r))
+     :value   (.getValue (.getValue r))
+     :version (.getVersion (.getValue r))}))
+
 (defrecord TairClient [client namespace key]
   client/Client
   (setup! [this test node]
@@ -83,7 +96,12 @@
   (invoke! [this test op]
     (timeout 5000 (assoc op :type :info, :error :timeout)
              (case (:f op)
-               :read (assoc op :type :ok, :value (str "abc")))))
+               :read (assoc op
+                       :type :ok,
+                       :value (-> client (.get namespace key) record->map))
+               :write (do (-> client (.put namespace key (:value op)))
+                          (assoc op :type :ok))
+               )))
 
   (teardown! [_ test]))
 
@@ -198,10 +216,10 @@
       :os debian/os
       :client (tair-client)
       :db (db version)
-      :generator (->> r
+      :generator (->> (gen/mix [r w])
                       (gen/stagger 1)
                       (gen/clients)
-                      (gen/time-limit 15))
+                      (gen/time-limit 3))
       )))
 
 (defn tair-noop-test
