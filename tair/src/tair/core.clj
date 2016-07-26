@@ -14,7 +14,8 @@
             [selmer.parser :as parser]
             [jepsen.client :as client]
             [jepsen.generator :as gen]
-            )
+            [knossos.model :as model]
+            [jepsen.checker :as checker])
   (:import (com.taobao.tair.impl DefaultTairManager)
            (com.taobao.tair Result)))
 
@@ -22,6 +23,7 @@
 
 (defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 (defn r [_ _] {:type :invoke, :f :read})
+(defn add [_ _] {:type :invoke, :f :add, :value 1})
 
 (defn classify
   [nodes]
@@ -74,11 +76,11 @@
     client))
 
 (defn record->map
-  "Converts a record to a map like
+  "Converts a result to a map like
 
-      {:generation 1
-       :expiration date
-       :bins {:k1 v1, :k2 v2}}"
+      {:rc [code=0, msg=success]
+       :value value
+       :version 3}"
   [^Result r]
   (when (.getValue r)
     {:rc      (.toString (.getRc r))
@@ -98,17 +100,19 @@
              (case (:f op)
                :read (assoc op
                        :type :ok,
-                       :value (-> client (.get namespace key) record->map))
+                       :value (-> client (.get namespace key) record->map :value))
                :write (do (-> client (.put namespace key (:value op)))
                           (assoc op :type :ok))
+               :add (do (-> client (.incr namespace key (:value op) 0 0))
+                        (assoc op :type :ok))
                )))
 
   (teardown! [_ test]))
 
-(defn tair-client
-  "A basic CAS register on top of a single key and bin."
+(defn tair-counter-client
+  "manipulate a counter key"
   []
-  (TairClient. nil 1 "key"))
+  (TairClient. nil (rand-int 1023) "counter-key"))
 
 (defn install!
   "Installs tair on the given nodes."
@@ -202,8 +206,7 @@
       ;(stop! node version)
       )))
 
-
-(defn tair-db-test
+(defn tair-counter-test
   [version]
   (let [
         nodes (list :yunkai)
@@ -214,16 +217,20 @@
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
-      :client (tair-client)
+      :client (tair-counter-client)
       :db (db version)
-      :generator (->> (gen/mix [r w])
-                      (gen/stagger 1)
-                      (gen/clients)
-                      (gen/time-limit 3))
+      :generator (->>
+                   (repeat 10 add)
+                   ;(repeat 100 add)
+                   (cons r)
+                   gen/mix
+                   (gen/delay 1)
+                   ;(gen/delay 1/100)
+                   (gen/clients)
+                   (gen/time-limit 5)
+                   ;(gen/time-limit 15)
+                   )
+      :model (model/cas-register)
+      :checker (checker/compose {:counter checker/counter
+                                 :perf    (checker/perf)})
       )))
-
-(defn tair-noop-test
-  [version]
-  (assoc tests/noop-test
-    :nodes [:winterfell :riverrun :theeyrie :casterlyrock :highgarden]
-    :ssh {:username "root", :password "root", :port 22}))
