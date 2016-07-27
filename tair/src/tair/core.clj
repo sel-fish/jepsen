@@ -90,8 +90,8 @@
 (defrecord TairClient [client namespace key]
   client/Client
   (setup! [this test node]
+    (Thread/sleep 10000)
     (let [client (connect)]
-      ;(Thread/sleep 10000)
       (assoc this :client client)))
 
 
@@ -117,8 +117,9 @@
 (defn install!
   "Installs tair on the given nodes."
   [node version]
-  (info node "installing tair" version)
-  (when-not (= (str version "-1")
+  ; pay attention that "-2" is just the minor build version
+  ; change it please
+  (when-not (= (str version "-2")
                (debian/installed-version "tair"))
     (debian/install ["libgoogle-perftools4"])
     (c/su
@@ -130,7 +131,9 @@
                          "-debian8.tgz"))
             (c/exec :tar :xvfz "tair.tgz")))
     (c/cd (str "/tmp/tair-" version "-debian8")
-          (c/exec :dpkg :-i (c/lit "tair*.deb")))))
+          (c/exec :dpkg :-i (c/lit "tair*.deb")))
+    )
+  )
 
 (defn configure!
   "Uploads configuration files to the given node."
@@ -193,9 +196,9 @@
     (setup! [_ test node]
       (info node "setting up Tair")
       (doto node
-        ;(install! version)
+        (install! version)
         (configure! test version)
-        ;(start! test version)
+        (start! test version)
         ))
 
     (teardown! [_ test node]
@@ -203,7 +206,7 @@
       ; a trick to retrieveip in teardown
       ; as jepsen will run teardown before setup :)
       (retrieveip node)
-      ;(stop! node version)
+      (stop! node version)
       )))
 
 (defn tair-counter-test
