@@ -55,7 +55,7 @@
   [roles]
   (dosync (alter *tairinfos* assoc :ds (:ds roles)))
   (dosync (alter *tairinfos* assoc :cs (:cs roles)))
-  (dosync (alter *tairinfos* assoc :device "eth1"))
+  (dosync (alter *tairinfos* assoc :device "eth0"))
   (dosync (alter *tairinfos* assoc :masterip nil))
   (dosync (alter *tairinfos* assoc :slaveip nil))
   (dosync (alter *tairinfos* assoc :groupname "group_fenqi"))
@@ -125,7 +125,7 @@
     (debian/install ["libgoogle-perftools4"])
     (c/su
       (debian/uninstall! ["tair"])
-      (info node "installing tair" version)
+      (info node "installing Tair" version)
       (c/cd "/tmp"
             ; download is too slow, use upload instead
             ;(c/exec :wget :-O (str "tair.tgz")
@@ -154,7 +154,7 @@
 (defn start!
   "Start tair."
   [node test version]
-  (info node "starting tair")
+  (info node "starting Tair")
   (c/su
     (c/cd (str "/usr/local/tair-" version)
           (c/exec :bash (str "tair.sh") (str "start_ds"))
@@ -181,7 +181,7 @@
 (defn stop!
   "Stop tair."
   [node version]
-  (info node "stop tair")
+  (info node "stop Tair")
   (c/su
     (c/cd (str "/usr/local/tair-" version)
           (c/exec :bash (str "tair.sh") (str "stop_ds"))
@@ -214,7 +214,8 @@
 (defn tair-counter-test
   [version]
   (let [
-        nodes (list :yunkai)
+        ; nodes (list :yunkai)
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
         roles (classify nodes)
         ]
     (init-tair-infos roles)
@@ -225,15 +226,12 @@
       :db (db version)
       :client (tair-counter-client)
       :generator (->>
-                   (repeat 10 add)
-                   ;(repeat 100 add)
+                   (repeat 100 add)
                    (cons r)
                    gen/mix
-                   (gen/delay 1)
-                   ;(gen/delay 1/100)
+                   (gen/delay 1/100)
                    (gen/clients)
-                   (gen/time-limit 5)
-                   ;(gen/time-limit 15)
+                   (gen/time-limit 15)
                    )
       :model (model/cas-register)
       :checker (checker/compose {:counter checker/counter
