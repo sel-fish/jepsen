@@ -121,14 +121,16 @@
   ; change it please
   (when-not (= (str version "-2")
                (debian/installed-version "tair"))
+    (c/upload (str "resources/tair-2.6.0-debian8.tgz") (str "/tmp/tair.tgz"))
     (debian/install ["libgoogle-perftools4"])
     (c/su
       (debian/uninstall! ["tair"])
       (info node "installing tair" version)
       (c/cd "/tmp"
-            (c/exec :wget :-O (str "tair.tgz")
-                    (str "https://github.com/lotair/tair/releases/download/jepsen/tair-" version
-                         "-debian8.tgz"))
+            ; download is too slow, use upload instead
+            ;(c/exec :wget :-O (str "tair.tgz")
+            ;        (str "https://github.com/lotair/tair/releases/download/jepsen/tair-" version
+            ;             "-debian8.tgz"))
             (c/exec :tar :xvfz "tair.tgz")))
     (c/cd (str "/tmp/tair-" version "-debian8")
           (c/exec :dpkg :-i (c/lit "tair*.deb")))
@@ -220,8 +222,8 @@
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
-      :client (tair-counter-client)
       :db (db version)
+      :client (tair-counter-client)
       :generator (->>
                    (repeat 10 add)
                    ;(repeat 100 add)
