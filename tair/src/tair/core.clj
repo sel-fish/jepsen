@@ -5,6 +5,7 @@
              [core :as jepsen]
              [db :as db]
              [control :as c]
+             [nemesis :as nemesis]
              [tests :as tests]
              [util :refer [timeout]]]
             [jepsen.os.debian :as debian]
@@ -211,6 +212,26 @@
       (stop! node version)
       )))
 
+(defn std-gen
+  "Takes a client generator and wraps it in a typical schedule and nemesis
+  causing failover."
+  [gen]
+  (gen/phases
+    (->> gen
+         (gen/nemesis
+           (gen/seq (cycle [(gen/sleep 2)
+                            {:type :info :f :start}
+                            (gen/sleep 10)
+                            {:type :info :f :stop}])))
+         (gen/time-limit 60))
+    ; Recover
+    (gen/nemesis
+      (gen/once {:type :info :f :stop}))
+    ; Wait for resumption of normal ops
+    (gen/clients
+      (->> gen
+           (gen/time-limit 5)))))
+
 (defn tair-counter-test
   [version]
   (let [
@@ -225,14 +246,13 @@
       :os debian/os
       :db (db version)
       :client (tair-counter-client)
+      :nemesis (nemesis/partition-random-halves)
       :generator (->>
                    (repeat 100 add)
                    (cons r)
                    gen/mix
                    (gen/delay 1/100)
-                   (gen/clients)
-                   (gen/time-limit 15)
-                   )
+                   std-gen)
       :model (model/cas-register)
       :checker (checker/compose {:counter checker/counter
                                  :perf    (checker/perf)})
