@@ -5,8 +5,5 @@
             [jepsen [core :as jepsen]
                     [report :as report]]))
 
-; (deftest tair-noop-test
-;   (is (:valid? (:results (jepsen/run! (tair/tair-noop-test "2.6.0"))))))
-
 (deftest tair-counter-test
   (is (:valid? (:results (jepsen/run! (tair/tair-counter-test "2.6.0"))))))
