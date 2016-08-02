@@ -60,10 +60,13 @@
   (dosync (alter *tairinfos* assoc :masterip nil))
   (dosync (alter *tairinfos* assoc :slaveip nil))
   (dosync (alter *tairinfos* assoc :groupname "group_fenqi"))
-  (dosync (alter *tairinfos* assoc :copycnt 1))
+  (dosync (alter *tairinfos* assoc :copycnt 2))
   (dosync (alter *tairinfos* assoc :bucketcnt 100))
   (dosync (alter *tairinfos* assoc :storage-engine "ldb"))
-  (dosync (alter *tairinfos* assoc :iplist [])))
+  (dosync (alter *tairinfos* assoc :iplist []))
+  (dosync (alter *tairinfos* assoc :inited 0))
+  (dosync (alter *tairinfos* assoc :skip-close-cluster 1))
+  )
 
 (defn connect
   "Returns a client for the given node. Blocks until the client is available."
@@ -135,6 +138,9 @@
             (c/exec :tar :xvfz "tair.tgz")))
     (c/cd (str "/tmp/tair-" version "-debian8")
           (c/exec :dpkg :-i (c/lit "tair*.deb")))
+    ; creat soft link
+    ; TODO test if the path exist
+    (c/su (c/exec :ln :-s (str "/usr/local/tair-" version) (str "/root/tair")))
     )
   )
 
@@ -144,20 +150,21 @@
   (info node "configure Tair")
   (c/su
     (c/exec :echo (parser/render-file "dataserver.conf" @*tairinfos*)
-            :> (str "/usr/local/tair-" version "/etc/dataserver.conf"))
+            :> (str "/root/tair/etc/dataserver.conf"))
     (if (in? (:cs @*tairinfos*) node)
       (do
         (c/exec :echo (parser/render-file "configserver.conf" @*tairinfos*)
-                :> (str "/usr/local/tair-" version "/etc/configserver.conf"))
+                :> (str "/root/tair/etc/configserver.conf"))
         (c/exec :echo (parser/render-file "group.conf" @*tairinfos*)
-                :> (str "/usr/local/tair-" version "/etc/group.conf"))))))
+                :> (str "/root/tair/etc/group.conf"))))))
 
 (defn start!
   "Start tair."
   [node test version]
   (info node "starting Tair")
+  (dosync (alter *tairinfos* assoc :inited 1))
   (c/su
-    (c/cd (str "/usr/local/tair-" version)
+    (c/cd (str "/root/tair")
           (c/exec :bash (str "tair.sh") (str "start_ds"))
           (if (in? (:cs @*tairinfos*) node)
             (c/exec :bash (str "tair.sh") (str "start_cs"))))
@@ -184,10 +191,10 @@
   [node version]
   (info node "stop Tair")
   (c/su
-    (c/cd (str "/usr/local/tair-" version)
+    (c/cd (str "/root/tair")
           (c/exec :bash (str "tair.sh") (str "stop_ds"))
-          (if (in? (:cs @*tairinfos*) node)
-            (c/exec :bash (str "tair.sh") (str "stop_cs")))
+          ; TODO test if cs exist
+          (c/exec :bash (str "tair.sh") (str "stop_cs"))
           (c/exec :bash (str "tair.sh") (str "clean"))
           (c/exec :rm :-rf (c/lit (str "ldbdata*")))
           )))
@@ -206,11 +213,16 @@
 
     (teardown! [_ test node]
       (info node "tearing down Tair")
-      ; a trick to retrieveip in teardown
-      ; as jepsen will run teardown before setup :)
-      (retrieveip node)
-      (stop! node version)
-      )))
+      (if (or (= 0 (:inited @*tairinfos*))
+              (= 0 (:skip-close-cluster @*tairinfos*)))
+        (do
+          ; a trick to retrieveip in teardown
+          ; as jepsen will run teardown before setup :)
+          (retrieveip node)
+          (stop! node version)
+          )
+        (info "skip teardown...")
+        ))))
 
 (defn std-gen
   "Takes a client generator and wraps it in a typical schedule and nemesis
@@ -256,4 +268,59 @@
       :model (model/cas-register)
       :checker (checker/compose {:counter checker/counter
                                  :perf    (checker/perf)})
+      )))
+
+(defn random-get-one-ds
+  "return a random node"
+  [xs]
+  (let [x (rand-nth xs)]
+    (info "pick" x)
+    (vector x)))
+
+(defn startds!
+  [node]
+  "Start Tair dataserver."
+  (info node "start Tair")
+  (c/su
+    (c/cd (str "/root/tair")
+          (c/exec :bash (str "tair.sh") (str "start_ds")))))
+
+(defn stopds!
+  [node]
+  "Stop Tair dataserver."
+  (info node "stop Tair")
+  (c/su
+    (c/cd (str "/root/tair")
+          (c/exec :bash (str "tair.sh") (str "stop_ds")))))
+
+(def one-ds-offline-nemesis
+  "A nemesis that crashes a random dataserver in Tair."
+  (nemesis/node-start-stopper
+    random-get-one-ds
+    (fn start [test node] (stopds! node) [:killed node])
+    (fn stop [test node] (startds! node) [:restarted node])))
+
+(defn tair-ds-offline-test
+  [version]
+  (let [
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
+        roles (classify nodes)
+        ]
+    (init-tair-infos roles)
+    (assoc tests/noop-test
+      :ssh {:username "root", :password "root", :port 22}
+      :nodes nodes
+      :os debian/os
+      :db (db version)
+      ;:client (tair-regular-client)
+      :nemesis one-ds-offline-nemesis
+      :generator (gen/nemesis
+                   (gen/seq
+                     [
+                      (gen/sleep 10)
+                      {:type :info, :f :start}
+                      (gen/sleep 120)
+                      {:type :info, :f :stop}
+                      ]
+                     ))
       )))
