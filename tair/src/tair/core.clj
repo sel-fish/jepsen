@@ -7,6 +7,7 @@
              [control :as c]
              [nemesis :as nemesis]
              [tests :as tests]
+             [generator :as generator]
              [util :refer [timeout]]]
             [jepsen.os.debian :as debian]
             [clojure.string :as str]
@@ -20,7 +21,9 @@
   (:import (com.taobao.tair.impl DefaultTairManager)
            (com.taobao.tair Result)))
 
-(def ^:dynamic *tairinfos* (ref {}))
+(def ^:dynamic *tair-infos* (ref {}))
+(def ^:dynamic *tair-keywords-info* {})
+(def ^:dynamic *tair-keywords-counter* (ref {}))
 
 (defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 (defn r [_ _] {:type :invoke, :f :read})
@@ -54,18 +57,32 @@
 (defn init-tair-infos
   "init tair infos"
   [roles]
-  (dosync (alter *tairinfos* assoc :ds (:ds roles)))
-  (dosync (alter *tairinfos* assoc :cs (:cs roles)))
-  (dosync (alter *tairinfos* assoc :device "eth0"))
-  (dosync (alter *tairinfos* assoc :masterip nil))
-  (dosync (alter *tairinfos* assoc :slaveip nil))
-  (dosync (alter *tairinfos* assoc :groupname "group_fenqi"))
-  (dosync (alter *tairinfos* assoc :copycnt 2))
-  (dosync (alter *tairinfos* assoc :bucketcnt 100))
-  (dosync (alter *tairinfos* assoc :storage-engine "ldb"))
-  (dosync (alter *tairinfos* assoc :iplist []))
-  (dosync (alter *tairinfos* assoc :inited 0))
-  (dosync (alter *tairinfos* assoc :skip-close-cluster 1))
+  (dosync (alter *tair-infos* assoc :ds (:ds roles)))
+  (dosync (alter *tair-infos* assoc :cs (:cs roles)))
+  (dosync (alter *tair-infos* assoc :device "eth0"))
+  (dosync (alter *tair-infos* assoc :masterip nil))
+  (dosync (alter *tair-infos* assoc :slaveip nil))
+  (dosync (alter *tair-infos* assoc :groupname "group_fenqi"))
+  (dosync (alter *tair-infos* assoc :copycnt 2))
+  (dosync (alter *tair-infos* assoc :bucketcnt 100))
+  (dosync (alter *tair-infos* assoc :storage-engine "ldb"))
+  (dosync (alter *tair-infos* assoc :iplist []))
+  (dosync (alter *tair-infos* assoc :inited 0))
+  (dosync (alter *tair-infos* assoc :skip-close-cluster 1))
+  )
+
+(defn init-tair-keywords
+  "init tair keywords info"
+  []
+  (let [
+        need-migrate-info {:file "/root/tair/logs/config.log", :str "need migrate"}
+        migrate-done-info {:file "/root/tair/logs/config.log", :str "migrate all done"}
+        ]
+    (def ^:dynamic *tair-keywords-info* (assoc-in *tair-keywords-info* [:migrate-start] need-migrate-info))
+    (def ^:dynamic *tair-keywords-info* (assoc-in *tair-keywords-info* [:migrate-done] migrate-done-info))
+    (dosync (alter *tair-keywords-counter* assoc :migrate-start 0))
+    (dosync (alter *tair-keywords-counter* assoc :migrate-done 0))
+    )
   )
 
 (defn connect
@@ -73,9 +90,9 @@
   []
   (let [client (DefaultTairManager.)
         _ (doto client
-            (.setConfigServerList (list (str (:masterip @*tairinfos*) ":5198")
-                                        (str (:slaveip @*tairinfos*) ":5198")))
-            (.setGroupName (:groupname @*tairinfos*))
+            (.setConfigServerList (list (str (:masterip @*tair-infos*) ":5198")
+                                        (str (:slaveip @*tair-infos*) ":5198")))
+            (.setGroupName (:groupname @*tair-infos*))
             (.init))]
     client))
 
@@ -109,6 +126,7 @@
                           (assoc op :type :ok))
                :add (do (-> client (.incr namespace key (:value op) 0 0))
                         (assoc op :type :ok))
+
                )))
 
   (teardown! [_ test]))
@@ -149,42 +167,42 @@
   [node test version]
   (info node "configure Tair")
   (c/su
-    (c/exec :echo (parser/render-file "dataserver.conf" @*tairinfos*)
+    (c/exec :echo (parser/render-file "dataserver.conf" @*tair-infos*)
             :> (str "/root/tair/etc/dataserver.conf"))
-    (if (in? (:cs @*tairinfos*) node)
+    (if (in? (:cs @*tair-infos*) node)
       (do
-        (c/exec :echo (parser/render-file "configserver.conf" @*tairinfos*)
+        (c/exec :echo (parser/render-file "configserver.conf" @*tair-infos*)
                 :> (str "/root/tair/etc/configserver.conf"))
-        (c/exec :echo (parser/render-file "group.conf" @*tairinfos*)
+        (c/exec :echo (parser/render-file "group.conf" @*tair-infos*)
                 :> (str "/root/tair/etc/group.conf"))))))
 
 (defn start!
   "Start tair."
   [node test version]
   (info node "starting Tair")
-  (dosync (alter *tairinfos* assoc :inited 1))
+  (dosync (alter *tair-infos* assoc :inited 1))
   (c/su
     (c/cd (str "/root/tair")
           (c/exec :bash (str "tair.sh") (str "start_ds"))
-          (if (in? (:cs @*tairinfos*) node)
+          (if (in? (:cs @*tair-infos*) node)
             (c/exec :bash (str "tair.sh") (str "start_cs"))))
     ))
 
 (defn retrieveip
   "retrieve ip and fill in *tairinfos*"
   [node]
-  (info node (net/device-ip (:device @*tairinfos*)))
-  (let [ip (net/device-ip (:device @*tairinfos*))]
-    (if (in? (:cs @*tairinfos*) node)
-      (if (= node (nth (:cs @*tairinfos*) 0))
-        ((dosync (alter *tairinfos* assoc :masterip ip))
-          (if (nil? (:slaveip @*tairinfos*))
-            (dosync (alter *tairinfos* assoc :slaveip ip))))
-        (dosync (alter *tairinfos* assoc :slaveip ip))
+  (info node (net/device-ip (:device @*tair-infos*)))
+  (let [ip (net/device-ip (:device @*tair-infos*))]
+    (if (in? (:cs @*tair-infos*) node)
+      (if (= node (nth (:cs @*tair-infos*) 0))
+        ((dosync (alter *tair-infos* assoc :masterip ip))
+          (if (nil? (:slaveip @*tair-infos*))
+            (dosync (alter *tair-infos* assoc :slaveip ip))))
+        (dosync (alter *tair-infos* assoc :slaveip ip))
         ))
     (info "add" ip "to iplist")
-    (dosync (alter *tairinfos* assoc :iplist (concat (:iplist @*tairinfos*) `(~ip))))
-    (info "iplist is" (:iplist @*tairinfos*))))
+    (dosync (alter *tair-infos* assoc :iplist (concat (:iplist @*tair-infos*) `(~ip))))
+    (info "iplist is" (:iplist @*tair-infos*))))
 
 (defn stop!
   "Stop tair."
@@ -213,8 +231,8 @@
 
     (teardown! [_ test node]
       (info node "tearing down Tair")
-      (if (or (= 0 (:inited @*tairinfos*))
-              (= 0 (:skip-close-cluster @*tairinfos*)))
+      (if (or (= 0 (:inited @*tair-infos*))
+              (= 0 (:skip-close-cluster @*tair-infos*)))
         (do
           ; a trick to retrieveip in teardown
           ; as jepsen will run teardown before setup :)
@@ -300,6 +318,56 @@
     (fn start [test node] (stopds! node) [:killed node])
     (fn stop [test node] (startds! node) [:restarted node])))
 
+(defn get-remote-keyword-count
+  "get keyword count from file"
+  [file keyword]
+  (let [count (c/exec :grep (str keyword) (str file) (c/lit "|wc -l"))]
+    (debug file keyword count)
+    count))
+
+(defn get-keyword-count
+  "get keyword info from mastercs"
+  [keyword]
+  (let [mastercs (nth (:cs @*tair-infos*) 0)
+        keyword-info (keyword *tair-keywords-info*)
+        keyword-count (c/on mastercs (get-remote-keyword-count (:file keyword-info) (:str keyword-info)))
+        ]
+    (read-string keyword-count)
+    ))
+
+(defn gen-get-keyword-count
+  "get keyword from log"
+  [keyword]
+  (reify generator/Generator
+    (op [gen test process]
+      (let [count (get-keyword-count keyword)]
+        (info "get count of " keyword ": " count)
+        (dosync (alter *tair-keywords-counter* assoc keyword count)))
+      nil)))
+
+(defn gen-wait-for-keyword
+  "wait until the keyword appear in timeout limited"
+  [keyword timeout-secs]
+  (reify generator/Generator
+    (op [gen test process]
+      (timeout (* 1000 timeout-secs)
+               (throw (RuntimeException.
+                        (str "Timed out after "
+                             timeout-secs
+                             " s waiting for " keyword)))
+               (let [expect (+ 1 (keyword @*tair-keywords-counter*))]
+                 (loop []
+                   (let [cur (get-keyword-count keyword)]
+                     (if (not= 0 (- expect cur))
+                       (do
+                         (info keyword "expect: " expect ", but: " cur ", sleep 10s and retry")
+                         (Thread/sleep 10000)
+                         (recur))
+                       (info keyword "get expect value" expect)
+                       ))
+                   )))
+      nil)))
+
 (defn tair-ds-offline-test
   [version]
   (let [
@@ -307,6 +375,7 @@
         roles (classify nodes)
         ]
     (init-tair-infos roles)
+    (init-tair-keywords)
     (assoc tests/noop-test
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
@@ -317,10 +386,30 @@
       :generator (gen/nemesis
                    (gen/seq
                      [
-                      (gen/sleep 10)
+                      (gen/sleep 30)
+                      (gen-get-keyword-count :migrate-start)
+                      (gen-get-keyword-count :migrate-done)
                       {:type :info, :f :start}
-                      (gen/sleep 120)
+                      (gen-wait-for-keyword :migrate-start 300)
+                      (gen-wait-for-keyword :migrate-done 300)
+                      (gen/sleep 30)
+                      (gen-get-keyword-count :migrate-start)
+                      (gen-get-keyword-count :migrate-done)
                       {:type :info, :f :stop}
+                      (gen-wait-for-keyword :migrate-start 300)
+                      (gen-wait-for-keyword :migrate-done 300)
                       ]
-                     ))
-      )))
+                     )))))
+
+(defn -main []
+  "I don't say 'Hello World' :) ..."
+  (let [
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
+        roles (classify nodes)
+        keyword :migrate-start
+        ]
+    (init-tair-infos roles)
+    (init-tair-keywords)
+    (info (keyword *tair-keywords-info*))
+    (info (:migrate-done *tair-keywords-info*))
+    ))
