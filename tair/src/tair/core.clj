@@ -42,9 +42,7 @@
           (if (<= i 1)
             (def cslist (concat cslist `(~node))))
           (def dsset (concat dsset `(~node)))
-          )
-        )
-      )
+          )))
     (def roles (assoc-in roles [:ds] dsset))
     (def roles (assoc-in roles [:cs] cslist))
     roles))
@@ -125,9 +123,7 @@
                :write (do (-> client (.put namespace key (:value op)))
                           (assoc op :type :ok))
                :add (do (-> client (.incr namespace key (:value op) 0 0))
-                        (assoc op :type :ok))
-
-               )))
+                        (assoc op :type :ok)))))
 
   (teardown! [_ test]))
 
@@ -364,8 +360,7 @@
                          (Thread/sleep 10000)
                          (recur))
                        (info keyword "get expect value" expect)
-                       ))
-                   )))
+                       )))))
       nil)))
 
 (defn tair-ds-offline-test
@@ -381,7 +376,7 @@
       :nodes nodes
       :os debian/os
       :db (db version)
-      ;:client (tair-regular-client)
+      :client (tair-counter-client)
       :nemesis one-ds-offline-nemesis
       :generator (gen/nemesis
                    (gen/seq
@@ -392,7 +387,6 @@
                       {:type :info, :f :start}
                       (gen-wait-for-keyword :migrate-start 300)
                       (gen-wait-for-keyword :migrate-done 300)
-                      (gen/sleep 30)
                       (gen-get-keyword-count :migrate-start)
                       (gen-get-keyword-count :migrate-done)
                       {:type :info, :f :stop}
@@ -411,5 +405,4 @@
     (init-tair-infos roles)
     (init-tair-keywords)
     (info (keyword *tair-keywords-info*))
-    (info (:migrate-done *tair-keywords-info*))
-    ))
+    (info (:migrate-done *tair-keywords-info*))))
