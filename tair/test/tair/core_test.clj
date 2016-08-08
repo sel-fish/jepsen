@@ -9,5 +9,9 @@
 ;  (is (:valid? (:results (jepsen/run! (tair/tair-counter-test "2.6.0"))))))
 
 ; test tair ds offline
-(deftest tair-ds-offline-test
-  (is (:valid? (:results (jepsen/run! (tair/tair-ds-offline-test "2.6.0"))))))
+;(deftest tair-ds-offline-test
+;  (is (:valid? (:results (jepsen/run! (tair/tair-ds-offline-test "2.6.0"))))))
+
+; test split one ds in tair
+(deftest tair-ds-split-test
+  (is (:valid? (:results (jepsen/run! (tair/tair-ds-split-test "2.6.0"))))))

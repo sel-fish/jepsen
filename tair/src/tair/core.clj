@@ -17,17 +17,14 @@
             [jepsen.client :as client]
             [jepsen.generator :as gen]
             [knossos.model :as model]
-            [jepsen.checker :as checker])
+            [jepsen.checker :as checker]
+            [clojure.set :as set])
   (:import (com.taobao.tair.impl DefaultTairManager)
            (com.taobao.tair Result)))
 
 (def ^:dynamic *tair-infos* (ref {}))
 (def ^:dynamic *tair-keywords-info* {})
 (def ^:dynamic *tair-keywords-counter* (ref {}))
-
-(defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
-(defn r [_ _] {:type :invoke, :f :read})
-(defn add [_ _] {:type :invoke, :f :add, :value 1})
 
 (defn classify
   [nodes]
@@ -106,6 +103,10 @@
      :value   (.getValue (.getValue r))
      :version (.getVersion (.getValue r))}))
 
+(defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
+(defn r [_ _] {:type :invoke, :f :read})
+(defn add [_ _] {:type :invoke, :f :add, :value 1})
+
 (defrecord TairClient [client namespace key]
   client/Client
   (setup! [this test node]
@@ -113,17 +114,19 @@
     (let [client (connect)]
       (assoc this :client client)))
 
-
   (invoke! [this test op]
-    (timeout 5000 (assoc op :type :info, :error :timeout)
+    (timeout 5000
+             (assoc op :type :info, :error :timeout)
              (case (:f op)
                :read (assoc op
                        :type :ok,
                        :value (-> client (.get namespace key) record->map :value))
-               :write (do (-> client (.put namespace key (:value op)))
-                          (assoc op :type :ok))
-               :add (do (-> client (.incr namespace key (:value op) 0 0))
-                        (assoc op :type :ok)))))
+               :write (do
+                        (-> client (.put namespace key (:value op)))
+                        (assoc op :type :ok))
+               :add (do
+                      (-> client (.incr namespace key (:value op) 0 0))
+                      (assoc op :type :ok)))))
 
   (teardown! [_ test]))
 
@@ -404,6 +407,53 @@
                    )
       )))
 
+(defn split-one-ds
+  "Split one dataserver off from the rest"
+  [coll]
+  (let [loner (rand-nth (seq (set/difference (set coll) (set (:cs @*tair-infos*)))))]
+    [[loner] (remove (fn [x] (= x loner)) coll)]))
+
+(defn split-one-cs
+  "Split one configserver off from the rest"
+  [coll]
+  (let [loner (rand-nth (:cs @*tair-infos*))]
+    [[loner] (remove (fn [x] (= x loner)) coll)]))
+
+(defn one-ds-split-nemesis
+  "split one ds from cluster"
+  []
+  (nemesis/partitioner (comp nemesis/complete-grudge split-one-ds))
+  )
+
+(defn tair-ds-split-test
+  [version]
+  (let [
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
+        roles (classify nodes)
+        ]
+    (init-tair-infos roles)
+    (init-tair-keywords)
+    (assoc tests/noop-test
+      :ssh {:username "root", :password "root", :port 22}
+      :nodes nodes
+      :os debian/os
+      :db (db version)
+      :client (tair-counter-client)
+      :nemesis (one-ds-split-nemesis)
+      ;:nemesis (nemesis/partition-random-halves)
+      :generator (gen/phases
+                   (gen/sleep 30)
+                   (gen/nemesis
+                     (wait-nemesis-done {:type :info, :f :start}))
+                   (->>
+                     w
+                     (gen/limit 10)
+                     (gen/clients))
+                   (gen/nemesis
+                     (wait-nemesis-done {:type :info, :f :stop}))
+                   )
+      )))
+
 (defn -main []
   "I don't say 'Hello World' :) ..."
   (let [
@@ -413,5 +463,20 @@
         ]
     (init-tair-infos roles)
     (init-tair-keywords)
-    (info (keyword *tair-keywords-info*))
-    (info (:migrate-done *tair-keywords-info*))))
+    ;(info (keyword *tair-keywords-info*))
+    ;(info (:migrate-done *tair-keywords-info*))
+
+    ;(info (nemesis/split-one nodes))
+    ;(info (split-one-cs nodes))
+    ;(info (split-one-ds nodes))
+
+    ;(let [x (set (:ds @*tair-infos*))]
+    ;  (info x)
+    ;  )
+    ;
+    ;(info (type (:cs @*tair-infos*)))
+    ;(info (type (:ds @*tair-infos*)))
+    ;(info (set/difference (set (:ds @*tair-infos*)) (set (:cs @*tair-infos*))))
+    (info ((comp nemesis/complete-grudge nemesis/split-one) nodes))
+    (info ((comp nemesis/complete-grudge split-one-ds) nodes))
+    ))
