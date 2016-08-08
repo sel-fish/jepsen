@@ -363,6 +363,19 @@
                        )))))
       nil)))
 
+(defn wait-nemesis-done
+  "as nemesis always cause migrate, provide this func to support this scenerio"
+  ([gen] (wait-nemesis-done gen 300))
+  ([gen timeout]
+   (gen/seq [
+             (gen-get-keyword-count :migrate-start)
+             (gen-get-keyword-count :migrate-done)
+             gen
+             (gen-wait-for-keyword :migrate-start timeout)
+             (gen-wait-for-keyword :migrate-done timeout)
+             ]))
+  )
+
 (defn tair-ds-offline-test
   [version]
   (let [
@@ -378,22 +391,18 @@
       :db (db version)
       :client (tair-counter-client)
       :nemesis one-ds-offline-nemesis
-      :generator (gen/nemesis
-                   (gen/seq
-                     [
-                      (gen/sleep 30)
-                      (gen-get-keyword-count :migrate-start)
-                      (gen-get-keyword-count :migrate-done)
-                      {:type :info, :f :start}
-                      (gen-wait-for-keyword :migrate-start 300)
-                      (gen-wait-for-keyword :migrate-done 300)
-                      (gen-get-keyword-count :migrate-start)
-                      (gen-get-keyword-count :migrate-done)
-                      {:type :info, :f :stop}
-                      (gen-wait-for-keyword :migrate-start 300)
-                      (gen-wait-for-keyword :migrate-done 300)
-                      ]
-                     )))))
+      :generator (gen/phases
+                   (gen/sleep 30)
+                   (gen/nemesis
+                     (wait-nemesis-done {:type :info, :f :start}))
+                   (->>
+                     w
+                     (gen/limit 10)
+                     (gen/clients))
+                   (gen/nemesis
+                     (wait-nemesis-done {:type :info, :f :stop}))
+                   )
+      )))
 
 (defn -main []
   "I don't say 'Hello World' :) ..."
