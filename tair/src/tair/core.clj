@@ -411,6 +411,7 @@
   "Split one dataserver off from the rest"
   [coll]
   (let [loner (rand-nth (seq (set/difference (set coll) (set (:cs @*tair-infos*)))))]
+    (info "loner is " loner)
     [[loner] (remove (fn [x] (= x loner)) coll)]))
 
 (defn split-one-cs
@@ -440,7 +441,6 @@
       :db (db version)
       :client (tair-counter-client)
       :nemesis (one-ds-split-nemesis)
-      ;:nemesis (nemesis/partition-random-halves)
       :generator (gen/phases
                    (gen/sleep 30)
                    (gen/nemesis
@@ -463,20 +463,5 @@
         ]
     (init-tair-infos roles)
     (init-tair-keywords)
-    ;(info (keyword *tair-keywords-info*))
-    ;(info (:migrate-done *tair-keywords-info*))
-
-    ;(info (nemesis/split-one nodes))
-    ;(info (split-one-cs nodes))
-    ;(info (split-one-ds nodes))
-
-    ;(let [x (set (:ds @*tair-infos*))]
-    ;  (info x)
-    ;  )
-    ;
-    ;(info (type (:cs @*tair-infos*)))
-    ;(info (type (:ds @*tair-infos*)))
-    ;(info (set/difference (set (:ds @*tair-infos*)) (set (:cs @*tair-infos*))))
-    (info ((comp nemesis/complete-grudge nemesis/split-one) nodes))
-    (info ((comp nemesis/complete-grudge split-one-ds) nodes))
+    (info (keyword *tair-keywords-info*))
     ))
