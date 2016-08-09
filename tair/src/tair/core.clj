@@ -94,20 +94,15 @@
     client))
 
 (defn record->map
-  "Converts a result to a map like
-
-      {:rc [code=0, msg=success]
-       :value value
-       :version 3}"
+  "Converts a result to a map like"
   [^Result r]
   (when (.getValue r)
-    {:rc      (-> r (.getRc))
-     :value   (.getValue (.getValue r))
-     :version (.getVersion (.getValue r))}))
+    {:rc      (.getRc r)
+     :value   (.getValue r)}))
 
 (defn w [_ _] {:type :invoke, :f :write, :value :put})
 (defn r [_ _] {:type :invoke, :f :read, :value :get})
-(defn add [_ _] {:type :invoke, :f :add, :value :incr})
+(defn add [_ _] {:type :invoke, :f :add, :value 1})
 
 (defrecord TairClient [client namespace key]
   client/Client
@@ -122,7 +117,7 @@
              (case (:f op)
                :read (assoc op
                        :type :ok,
-                       :value (-> client (.get namespace key) record->map :value))
+                       :value (-> client (.get namespace key) record->map :value (.getValue)))
                :write (let [
                             ns (rand-int (:maxns @*tair-infos*))
                             k (random/base64 32)
@@ -131,12 +126,18 @@
                             code (-> rc (.getCode))
                             ]
                         (if [= 0 code]
-                        (assoc op :type :ok, :value :success)
-                        (assoc op :type :info, :error (keyword (-> rc (.getRc) (.getMessage))))
+                          (assoc op :type :ok, :value :success)
+                          (assoc op :type :info, :error (keyword (-> rc (.getRc) (.getMessage))))
+                          ))
+               :add (let [
+                          record-map (-> client (.incr namespace key (:value op) 0 0) record->map)
+                          code (-> (:rc record-map) (.getCode))
+                          ]
+                      (if [= 0 code]
+                        (assoc op :type :ok)
+                        (assoc op :type :info, :error (keyword (-> (:rc record-map) (.getMessage))))
                         ))
-               :add (do
-                      (-> client (.incr namespace key 1 0 0))
-                      (assoc op :type :ok, :value :success)))))
+               )))
 
   (teardown! [_ test]))
 
