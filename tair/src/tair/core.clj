@@ -146,6 +146,11 @@
   []
   (TairClient. nil (rand-int 1023) "counter-key"))
 
+(defn tair-common-client
+  "common tair client"
+  []
+  (TairClient. nil 0 ""))
+
 (defn install!
   "Installs tair on the given nodes."
   [node version]
@@ -281,6 +286,7 @@
         ]
     (init-tair-infos roles)
     (assoc tests/noop-test
+      :name "tair-counter-test"
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
@@ -399,11 +405,12 @@
     (init-tair-infos roles)
     (init-tair-keywords)
     (assoc tests/noop-test
+      :name tair-ds-offline-test
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
       :db (db version)
-      :client (tair-counter-client)
+      :client (tair-common-client)
       :nemesis one-ds-offline-nemesis
       :generator (gen/phases
                    (gen/sleep 30)
@@ -446,11 +453,12 @@
     (init-tair-infos roles)
     (init-tair-keywords)
     (assoc tests/noop-test
+      :name "tair-ds-split-test"
       :ssh {:username "root", :password "root", :port 22}
       :nodes nodes
       :os debian/os
       :db (db version)
-      :client (tair-counter-client)
+      :client (tair-common-client)
       :nemesis (one-ds-split-nemesis)
       :generator (gen/phases
                    (gen/sleep 30)
