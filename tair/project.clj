@@ -9,5 +9,6 @@
                  [com.mogujie.mst/jepsen "0.1.2"]
                  [com.taobao.tair/tair-client "2.3.4"]
                  [selmer "1.0.7"]
+                 [crypto-random "1.2.0"]
                  ]
   :main tair.core)

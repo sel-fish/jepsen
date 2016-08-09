@@ -2,25 +2,26 @@
   (:require [jepsen.tests :as tests]
             [clojure.tools.logging :refer :all]
             [jepsen
-             [core :as jepsen]
              [db :as db]
              [control :as c]
              [nemesis :as nemesis]
              [tests :as tests]
              [generator :as generator]
-             [util :refer [timeout]]]
-            [jepsen.os.debian :as debian]
-            [clojure.string :as str]
-            [jepsen.control.net :as net]
-            [clojure.java.io :as io]
+             [util :refer [timeout]]
+             [client :as client]
+             [generator :as gen]
+             [checker :as checker]
+             ]
             [selmer.parser :as parser]
-            [jepsen.client :as client]
-            [jepsen.generator :as gen]
             [knossos.model :as model]
-            [jepsen.checker :as checker]
-            [clojure.set :as set])
+            [clojure.set :as set]
+            [jepsen.os.debian :as debian]
+            [jepsen.control.net :as net]
+            [crypto.random :as random]
+            )
   (:import (com.taobao.tair.impl DefaultTairManager)
-           (com.taobao.tair Result)))
+           (com.taobao.tair Result ResultCode))
+  )
 
 (def ^:dynamic *tair-infos* (ref {}))
 (def ^:dynamic *tair-keywords-info* {})
@@ -59,6 +60,7 @@
   (dosync (alter *tair-infos* assoc :slaveip nil))
   (dosync (alter *tair-infos* assoc :groupname "group_fenqi"))
   (dosync (alter *tair-infos* assoc :copycnt 2))
+  (dosync (alter *tair-infos* assoc :maxns 1023))
   (dosync (alter *tair-infos* assoc :bucketcnt 100))
   (dosync (alter *tair-infos* assoc :storage-engine "ldb"))
   (dosync (alter *tair-infos* assoc :iplist []))
@@ -99,13 +101,13 @@
        :version 3}"
   [^Result r]
   (when (.getValue r)
-    {:rc      (.toString (.getRc r))
+    {:rc      (-> r (.getRc))
      :value   (.getValue (.getValue r))
      :version (.getVersion (.getValue r))}))
 
-(defn w [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
-(defn r [_ _] {:type :invoke, :f :read})
-(defn add [_ _] {:type :invoke, :f :add, :value 1})
+(defn w [_ _] {:type :invoke, :f :write, :value :put})
+(defn r [_ _] {:type :invoke, :f :read, :value :get})
+(defn add [_ _] {:type :invoke, :f :add, :value :incr})
 
 (defrecord TairClient [client namespace key]
   client/Client
@@ -121,12 +123,20 @@
                :read (assoc op
                        :type :ok,
                        :value (-> client (.get namespace key) record->map :value))
-               :write (do
-                        (-> client (.put namespace key (:value op)))
-                        (assoc op :type :ok))
+               :write (let [
+                            ns (rand-int (:maxns @*tair-infos*))
+                            k (random/base64 32)
+                            v (random/base64 32)
+                            rc (-> client (.put ns k v))
+                            code (-> rc (.getCode))
+                            ]
+                        (if [= 0 code]
+                        (assoc op :type :ok, :value :success)
+                        (assoc op :type :info, :error (keyword (-> rc (.getRc) (.getMessage))))
+                        ))
                :add (do
-                      (-> client (.incr namespace key (:value op) 0 0))
-                      (assoc op :type :ok)))))
+                      (-> client (.incr namespace key 1 0 0))
+                      (assoc op :type :ok, :value :success)))))
 
   (teardown! [_ test]))
 
@@ -155,7 +165,7 @@
             (c/exec :tar :xvfz "tair.tgz")))
     (c/cd (str "/tmp/tair-" version "-debian8")
           (c/exec :dpkg :-i (c/lit "tair*.deb")))
-    ; creat soft link
+    ; create soft link
     ; TODO test if the path exist
     (c/su (c/exec :ln :-s (str "/usr/local/tair-" version) (str "/root/tair")))
     )
@@ -397,13 +407,13 @@
       :generator (gen/phases
                    (gen/sleep 30)
                    (gen/nemesis
-                     (wait-nemesis-done {:type :info, :f :start}))
+                     (wait-nemesis-done {:type :info, :f :start, :value :stopds}))
                    (->>
                      w
                      (gen/limit 10)
                      (gen/clients))
                    (gen/nemesis
-                     (wait-nemesis-done {:type :info, :f :stop}))
+                     (wait-nemesis-done {:type :info, :f :stop, :value :startds}))
                    )
       )))
 
@@ -444,13 +454,13 @@
       :generator (gen/phases
                    (gen/sleep 30)
                    (gen/nemesis
-                     (wait-nemesis-done {:type :info, :f :start}))
+                     (wait-nemesis-done {:type :info, :f :start, :value :splitds}))
                    (->>
                      w
                      (gen/limit 10)
                      (gen/clients))
                    (gen/nemesis
-                     (wait-nemesis-done {:type :info, :f :stop}))
+                     (wait-nemesis-done {:type :info, :f :stop, :value :recoverds}))
                    )
       )))
 
@@ -464,4 +474,5 @@
     (init-tair-infos roles)
     (init-tair-keywords)
     (info (keyword *tair-keywords-info*))
+    (info (random/base64 10))
     ))
