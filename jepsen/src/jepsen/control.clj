@@ -114,6 +114,7 @@
 (defn ssh*
   "Evaluates an SSH action against the current host."
   [action]
+  ;(info "ssh content :" action)
   (ssh/ssh *session* action))
 
 (defn exec*

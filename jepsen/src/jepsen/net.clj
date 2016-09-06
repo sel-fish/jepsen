@@ -4,11 +4,13 @@
   (:require [jepsen.control.net :as control.net]))
 
 (defprotocol Net
-  (drop! [net test src dest] "Drop traffic between nodes src and dest.")
-  (heal! [net test]          "End all traffic drops and restores network to fast operation.")
-  (slow! [net test]          "Delays network packets")
-  (flaky! [net test]         "Introduces randomized packet loss")
-  (fast! [net test]          "Removes packet loss and delays."))
+  (drop! [net test src dest]  "Drop traffic between nodes src and dest.")
+  (heal! [net test]           "End all traffic drops and restores network to fast operation.")
+  (slow! [net test]           "Delays network packets")
+  (flaky! [net test]          "Introduces randomized packet loss")
+  (fast! [net test]           "Removes packet loss and delays.")
+  (deaf! [net test dest port] "Ignore the packet of specific port")
+  )
 
 (def noop
   "Does nothing."
@@ -43,7 +45,12 @@
 
     (fast! [net test]
       (on-many (:nodes test)
-               (exec :tc :qdisc :del :dev :eth0 :root)))))
+               (exec :tc :qdisc :del :dev :eth0 :root)))
+
+    (deaf! [net test dest port]
+      (on dest (su (exec :iptables :-A :INPUT :-p :tcp :--sport (str port) :-j
+                         :DROP :-w))))
+    ))
 
 (def ipfilter
   "IPFilter rules"
