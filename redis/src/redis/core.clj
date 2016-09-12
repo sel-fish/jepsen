@@ -33,9 +33,12 @@
 (defn classify [nodes]
   "classify nodes to different roles"
   (let [
+        sentinel-num 3
         redis-slave-num 2
-        sentinels (take 3 nodes)
-        rest (remove (set sentinels) nodes)
+        sentinels (take sentinel-num nodes)
+        rest (if (> (count nodes) (* 2 sentinel-num))
+               (remove (set sentinels) nodes)
+               nodes)
         redis-group-num (count rest)
         servers (take redis-group-num rest)
         ]
@@ -50,22 +53,20 @@
               slave-info {:isslave 1, :master redis-master}
               master-info {:isslave 0}
               ]
-          (info "master:" redis-master)
           (def nodes-info (update-nodes-info nodes-info redis-master master-info))
           (doseq [slave-index (range redis-slave-num)]
             (let [redis-slave (nth servers (mod (+ 1 (+ i slave-index)) redis-group-num))]
-              (info "slave:" redis-slave)
               (def nodes-info (update-nodes-info nodes-info redis-slave slave-info))
               )
             )
           (recur (+ i 1) (conj redis-masters redis-master))
           )
         {
-         :sentinels       (into #{} sentinels)
-         :servers         servers
-         :redis-group-num redis-group-num
-         :redis-masters   (seq redis-masters)
-         :nodes-info      nodes-info
+         :sentinels           (into #{} sentinels)
+         :servers             servers
+         :redis-group-num     redis-group-num
+         :redis-masters       (seq redis-masters)
+         :nodes-info          nodes-info
          }
         ))))
 
@@ -74,8 +75,8 @@
   (def ^:dynamic *redis-infos* (ref (merge @*redis-infos* roles)))
   (dosync (alter *redis-infos* assoc :device "eth0"))
   (dosync (alter *redis-infos* assoc :master-port 6379))
-  ;(dosync (alter *redis-infos* assoc :slave-port 16379))
   (dosync (alter *redis-infos* assoc :sentinel-port 26379))
+  (dosync (alter *redis-infos* assoc :group-name-prefix "session-cache"))
   (dosync (alter *redis-infos* assoc :ipmap {}))
   (dosync (alter *redis-infos* assoc :inited 0))
   (dosync (alter *redis-infos* assoc :skip-close-cluster 1))
@@ -124,15 +125,26 @@
   (info node "configure Redis")
   (let [master-port (:master-port @*redis-infos*)
         sentinel-port (:sentinel-port @*redis-infos*)
-        redis-masters (:redis-masters @*redis-infos*)
-        ]
+        sentinel-num (count (:sentinels @*redis-infos*))]
     (c/su
       (if (contains? (:sentinels @*redis-infos*) node)
-        (c/exec :echo (parser/render-file "sentinel.conf"
-                                          {:port          sentinel-port,
-                                           :redis-masters redis-masters})
-                :> (str "/root/redis/etc/sentinel-" (str sentinel-port) ".conf"))
-        )
+        (let [redis-masters (:redis-masters @*redis-infos*)
+              group-name-prefix (:group-name-prefix @*redis-infos*)]
+          (loop [i 0
+                 redis-groups []]
+            (if (< i (count redis-masters))
+              (let [redis-master (nth redis-masters i)
+                    redis-group {:redis_group_name (str group-name-prefix i)
+                                 :redis_master_ip (redis-master (:ipmap @*redis-infos*))
+                                 :redis_master_port master-port
+                                 :quronum (+ 1 (quot sentinel-num 2))}]
+                (debug redis-group)
+                (recur (+ 1 i) (conj redis-groups redis-group)))
+              (c/exec :echo (parser/render-file "sentinel.conf"
+                                                {:port         sentinel-port,
+                                                 :redis_groups (seq redis-groups)})
+                      :> (str "/root/redis/etc/sentinel-" (str sentinel-port) ".conf"))
+              ))))
       (if (contains? (:nodes-info @*redis-infos*) node)
         (let [node-info (node (:nodes-info @*redis-infos*))]
           (loop [i 0
@@ -145,8 +157,6 @@
                     master-ip (if is-slave ((:master redis-info) (:ipmap @*redis-infos*)) nil)
                     master-port (if is-slave master-port nil)
                     ]
-                (info (:master redis-info))
-                (info (:ipmap @*redis-infos*))
                 (c/exec :echo (parser/render-file "redis.conf"
                                                   {:port        port,
                                                    :maxmemory   "1G",
@@ -168,11 +178,8 @@
 (defn retrieveip
   "retrieve ip and fill in *redis-infos*"
   [node]
-  (info node (jepsen.control.net/device-ip (:device @*redis-infos*)))
   (let [ip (jepsen.control.net/device-ip (:device @*redis-infos*))]
-    (info "add {" node "," ip "} to ipmap")
-    (dosync (alter *redis-infos* assoc :ipmap (assoc (:ipmap @*redis-infos*) node ip)))
-    (info "ipmap is" (:ipmap @*redis-infos*))))
+    (dosync (alter *redis-infos* assoc :ipmap (assoc (:ipmap @*redis-infos*) node ip)))))
 
 (defn stop!
   "Stop tair."
@@ -209,7 +216,8 @@
 (defn redis-sentinel-setup-test
   [version]
   (let [
-        nodes (getlist "n" 7)
+        ;nodes (getlist "n" 7)
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
         roles (classify nodes)
         ]
     (init-redis-infos roles)
@@ -224,10 +232,9 @@
 (defn -main []
   "I don't say 'Hello World' :) ..."
   (let [
-        nodes (getlist "n" 7)
+        ;nodes (getlist "n" 7)
+        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
         roles (classify nodes)
         ]
-  ;(info (getlist "n" 5))
-  ;(info (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden))
   (info roles)
   ))
