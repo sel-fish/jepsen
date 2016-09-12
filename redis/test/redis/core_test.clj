@@ -1,7 +1,7 @@
 (ns redis.core-test
   (:require [clojure.test :refer :all]
-            [redis.core :refer :all]))
+            [redis.core :as redis]
+            [jepsen.core :as jepsen]))
 
-(deftest a-test
-  (testing "FIXME, I fail."
-    (is (= 0 1))))
+(deftest redis-sentinel-setup-test
+  (is (:valid? (:results (jepsen/run! (redis/redis-sentinel-setup-test "2.8.21"))))))
