@@ -18,7 +18,7 @@
             [jepsen.os.debian :as debian]
             [jepsen.control.net :as net]
             [crypto.random :as random]
-            ))
+            [clojure.string :as string]))
 
 (def ^:dynamic *redis-infos* (ref {}))
 
@@ -101,6 +101,13 @@
     ;(info command)
     (c/exec :bash :-c (c/lit command))))
 
+(defn check-dir-with-wildcard
+  "check if dir exist, return 'True' if exist, otherwise 'False'"
+  [path]
+  (let [command (str "\"if ls " path " 1>/dev/null 2>&1 ; then echo True; else echo False; fi\"")]
+    ;(info command)
+    (c/exec :bash :-c (c/lit command))))
+
 (defn install!
   "install redis bin"
   [node version]
@@ -173,7 +180,34 @@
   [node test version]
   (info node "starting Redis")
   (dosync (alter *redis-infos* assoc :inited 1))
-  )
+  (let [master-port (:master-port @*redis-infos*)
+        sentinel-port (:sentinel-port @*redis-infos*)
+        sentinel-num (count (:sentinels @*redis-infos*))]
+    (c/su
+      (c/cd
+        (str "/root/redis")
+        (if (contains? (:sentinels @*redis-infos*) node)
+          (do
+            (c/exec :mkdir (str "sentinel-" sentinel-port))
+            (c/exec (str "bin/redis-sentinel") (str "etc/sentinel-" sentinel-port ".conf"))
+            )
+          )
+        (if (contains? (:nodes-info @*redis-infos*) node)
+          (let [node-info (node (:nodes-info @*redis-infos*))]
+            (info "start redis-server...")
+            (loop [i 0
+                   slave-port (+ 1 master-port)]
+              (when (< i (count node-info))
+                (let [redis-info (nth node-info i)
+                      is-slave (= 1 (:isslave redis-info))
+                      redis-port (if is-slave slave-port master-port)
+                      next-slave-port (if is-slave (+ 1 slave-port) slave-port)
+                      ]
+                  (c/exec :mkdir (str "redis-" redis-port))
+                  (c/exec (str "bin/redis-server") (str "etc/redis-" redis-port ".conf"))
+                  (recur (+ 1 i) next-slave-port)
+                  ))))
+          )))))
 
 (defn retrieveip
   "retrieve ip and fill in *redis-infos*"
@@ -185,7 +219,40 @@
   "Stop tair."
   [node version]
   (info node "stop Redis")
-  )
+  (let [master-port (:master-port @*redis-infos*)]
+    (c/su
+      (c/cd
+        (str "/root/redis")
+        (let [is-sentinel (= "True" (check-dir-with-wildcard "sentinel-*"))
+              is-redis (= "True" (check-dir-with-wildcard "redis-*"))]
+          (if is-sentinel
+            (let [sentinel-paths-str (c/exec :ls c/| :grep "sentinel-")
+                  sentinel-paths (string/split-lines sentinel-paths-str)]
+              (info node "stop redis-sentinel..." sentinel-paths (count sentinel-paths))
+              (doseq [sentinel-path sentinel-paths]
+                (try
+                  (c/cd
+                    sentinel-path
+                    (c/exec :kill (c/lit "`cat sentinel.pid`")))
+                  (catch Exception e
+                    (info "exception: " (.getMessage e)))
+                  ))))
+          (if is-redis
+            (let [redis-paths-str (c/exec :ls c/| :grep "redis-")
+                  redis-paths (string/split-lines redis-paths-str)]
+              (info node "stop redis..." redis-paths (count redis-paths))
+              (doseq [redis-path redis-paths]
+                (try
+                  (c/cd
+                    redis-path
+                    (c/exec :kill (c/lit "`cat redis.pid`")))
+                  (catch Exception e
+                    (info "exception: " (.getMessage e)))
+                  ))))
+          )
+        (c/exec :rm :-rf (c/lit "sentinel-*"))
+        (c/exec :rm :-rf (c/lit "redis-*"))
+        ))))
 
 (defn db
   "Redis for a particular version."
@@ -196,7 +263,7 @@
       (doto node
         (install! version)
         (configure! test version)
-        ;(start! test version)
+        (start! test version)
         ))
 
     (teardown! [_ test node]
@@ -207,7 +274,7 @@
           ; a trick to retrieveip in teardown
           ; as jepsen will run teardown before setup :)
           (retrieveip node)
-          ;(stop! node version)
+          (stop! node version)
           )
         (info "skip teardown...")
         )
@@ -236,5 +303,9 @@
         nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
         roles (classify nodes)
         ]
-  (info roles)
+    ;(doseq [node [1 2 3]]
+    (doseq [node nodes]
+      (info node))
+    (info "abc")
+  ;(info roles)
   ))
