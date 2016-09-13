@@ -34,7 +34,7 @@
   "classify nodes to different roles"
   (let [
         sentinel-num 3
-        redis-slave-num 2
+        redis-slave-num 1
         sentinels (take sentinel-num nodes)
         rest (if (> (count nodes) (* 2 sentinel-num))
                (remove (set sentinels) nodes)
@@ -283,8 +283,8 @@
 (defn redis-sentinel-setup-test
   [version]
   (let [
-        ;nodes (getlist "n" 7)
-        nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
+        nodes (getlist "n" 7)
+        ;nodes (list :winterfell :riverrun :theeyrie :casterlyrock :highgarden)
         roles (classify nodes)
         ]
     (init-redis-infos roles)
